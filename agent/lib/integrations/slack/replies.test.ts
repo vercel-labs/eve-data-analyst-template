@@ -1,7 +1,13 @@
+import { emptySessionView } from "eve/events";
 import { beforeEach, expect, it, vi } from "vitest";
 
 import { recordQuery } from "../../analyst/query-log";
-import { messageCompletedHarness } from "../../testing/slack";
+import { recordThreadRole } from "../../analyst/thread-roles";
+import { sessionContext, slackAuth } from "../../testing/session";
+import {
+  messageCompletedHarness,
+  slackEventContext,
+} from "../../testing/slack";
 import { installTestState, testState } from "../../testing/state";
 import { replyDelivery, replyEvents } from "./replies";
 import { recordVisualizationDelivery } from "./visualizations/receipts";
@@ -36,4 +42,38 @@ it("delegates replies without SQL to eve", async () => {
   const harness = messageCompletedHarness(replyEvents["content.completed"]);
   await harness.complete();
   expect(harness.next).toHaveBeenCalledOnce();
+});
+
+it("clears Slack status when a thread-role notice post fails", async () => {
+  const settled = replyEvents["turn.settled"];
+  if (!settled) {
+    throw new Error("Expected a turn.settled renderer.");
+  }
+  vi.stubEnv("ANALYST_DATABASE_URL", "postgres://db/app");
+  vi.stubEnv(
+    "ANALYST_ROLE_MAP",
+    JSON.stringify({ U0ALICE: "analyst_finance" })
+  );
+  recordThreadRole(slackAuth({ userId: "U0ALICE" }));
+  const next = vi.fn(() => Promise.resolve());
+  await expect(
+    settled(
+      {
+        data: { outcome: "cancelled", turnId: "turn-2" },
+        type: "turn.settled",
+      },
+      {
+        ...sessionContext({ current: slackAuth() }),
+        channel: slackEventContext({
+          thread: {
+            post: vi.fn(() => Promise.reject(new Error("invalid_auth"))),
+          },
+        }),
+        position: { index: 0, line: 0 },
+        view: emptySessionView(),
+      },
+      next
+    )
+  ).rejects.toThrow("invalid_auth");
+  expect(next).toHaveBeenCalledOnce();
 });

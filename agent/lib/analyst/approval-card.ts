@@ -64,6 +64,46 @@ const plain = (text: string) => ({
   type: "plain_text" as const,
 });
 
+const controlCardSchema = z
+  .object({
+    actions: z.array(z.object({ value: z.string() }).passthrough()),
+    type: z.literal("card"),
+  })
+  .passthrough();
+
+const controlLabel = (value: string) => {
+  if (value === "approve") {
+    return "Run query";
+  }
+  if (value === "deny") {
+    return "Cancel";
+  }
+  return null;
+};
+
+/* Keep eve's action IDs and values while restoring query-specific button labels. */
+const queryControls = (parts: SlackInteractionCardParts) => ({
+  ...parts.controls,
+  blocks: parts.controls.blocks.map((block) => {
+    const parsed = controlCardSchema.safeParse(block);
+    if (!parsed.success) {
+      return block;
+    }
+    return {
+      ...parsed.data,
+      actions: parsed.data.actions.map((action) => {
+        const label = controlLabel(action.value);
+        return label === null
+          ? action
+          : {
+              ...action,
+              text: { emoji: false, text: label, type: "plain_text" },
+            };
+      }),
+    };
+  }),
+});
+
 const withQueryDetails = (
   parts: SlackInteractionCardParts,
   details: string,
@@ -73,7 +113,7 @@ const withQueryDetails = (
 ): SlackInteractionCardParts => ({
   ...parts,
   controls: {
-    ...parts.controls,
+    ...queryControls(parts),
     text: escapeMrkdwn(`Approve query: ${purpose}`),
   },
   details: {

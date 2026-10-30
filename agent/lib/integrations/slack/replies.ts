@@ -28,6 +28,8 @@ const noticeDeliveries = defineState<Record<string, string>>(
 /** Final-reply delivery, swappable in tests. */
 export const replyDelivery = { post: postCompletedSlackReply };
 
+const renderDefault = async (next: () => Promise<void>) => await next();
+
 /**
  * Coordinate Slack replies after model messages and tool calls.
  *
@@ -72,26 +74,30 @@ export const replyEvents = {
     });
   },
   async "turn.settled"(event, ctx, next) {
-    if (
-      event.data.outcome === "cancelled" &&
-      conflictsWithThreadRoles(ctx.session.auth.current) &&
-      !noticeDeliveries.get()[event.data.turnId]
-    ) {
-      const posted = await ctx.channel.thread.post(THREAD_ROLE_NOTICE);
-      if (posted.raw.ok !== true || !posted.id) {
-        throw new Error(
-          "Could not confirm delivery of the thread role notice."
+    try {
+      if (
+        event.data.outcome === "cancelled" &&
+        conflictsWithThreadRoles(ctx.session.auth.current) &&
+        !noticeDeliveries.get()[event.data.turnId]
+      ) {
+        const posted = await ctx.channel.thread.post(THREAD_ROLE_NOTICE);
+        if (posted.raw.ok !== true || !posted.id) {
+          throw new Error(
+            "Could not confirm delivery of the thread role notice."
+          );
+        }
+        noticeDeliveries.update((current) =>
+          withRecentEntry(
+            current,
+            event.data.turnId,
+            posted.id,
+            MAX_TRACKED_NOTICES
+          )
         );
       }
-      noticeDeliveries.update((current) =>
-        withRecentEntry(
-          current,
-          event.data.turnId,
-          posted.id,
-          MAX_TRACKED_NOTICES
-        )
-      );
+    } finally {
+      // eve's default renderer clears the thread's thinking status.
+      await renderDefault(next);
     }
-    return next();
   },
 } satisfies SlackRendererEvents;

@@ -16,23 +16,24 @@ if (!(callSettled && turnStarted)) {
 const alice = slackAuth({ userId: "U0ALICE" });
 const bob = slackAuth({ userId: "U0BOB" });
 const meta = { position: { index: 0, line: 0 } };
-const view = foldEvents(emptySessionView(), [
-  {
-    data: {
-      callId: "call-1",
-      capability: { kind: "tool", name: "run_sql" },
-      owner: { runId: "run-1" },
+const view = (toolName = "run_sql") =>
+  foldEvents(emptySessionView(), [
+    {
+      data: {
+        callId: "call-1",
+        capability: { kind: "tool", name: toolName },
+        owner: { runId: "run-1" },
+      },
+      meta: {
+        at: "2026-10-10T00:00:00.000Z",
+        endOfLine: true,
+        position: meta.position,
+      },
+      type: "call.requested",
     },
-    meta: {
-      at: "2026-10-10T00:00:00.000Z",
-      endOfLine: true,
-      position: meta.position,
-    },
-    type: "call.requested",
-  },
-]);
+  ]);
 
-const context = (current: SessionAuthContext) => {
+const context = (current: SessionAuthContext, toolName?: string) => {
   const cancel = vi.fn<HookContext["cancel"]>();
   const partial: Partial<HookContext> = {
     ...sessionContext({ current }),
@@ -40,7 +41,7 @@ const context = (current: SessionAuthContext) => {
     cancel,
     channel: { kind: "channel:slack", metadata: {} },
     position: meta.position,
-    view,
+    view: view(toolName),
   };
   return {
     cancel,
@@ -78,6 +79,21 @@ beforeEach(() => {
 });
 
 describe("v27 call.settled", () => {
+  it.each(["run_sql", "describe_schema"])(
+    "records a successful %s call",
+    async (toolName) => {
+      await callSettled(settled(), context(alice, toolName).ctx);
+      expect(testState.get("analyst.thread-roles")).toStrictEqual({
+        roles: ["analyst_finance"],
+      });
+    }
+  );
+
+  it("ignores an unrelated tool", async () => {
+    await callSettled(settled(), context(alice, "post_slack_table").ctx);
+    expect(testState.get("analyst.thread-roles")).toBeUndefined();
+  });
+
   it("records a successful role-scoped tool call", async () => {
     await callSettled(settled(), context(alice).ctx);
     expect(testState.get("analyst.thread-roles")).toStrictEqual({
@@ -95,6 +111,20 @@ describe("v27 call.settled", () => {
     const next = context(bob);
     await turnStarted(started(), next.ctx);
     expect(next.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("lets the same caller continue", async () => {
+    await callSettled(settled(), context(alice).ctx);
+    const next = context(alice);
+    await turnStarted(started(), next.ctx);
+    expect(next.cancel).not.toHaveBeenCalled();
+  });
+
+  it("lets anyone continue when only failed calls ran", async () => {
+    await callSettled(settled("failed"), context(alice).ctx);
+    const next = context(bob);
+    await turnStarted(started(), next.ctx);
+    expect(next.cancel).not.toHaveBeenCalled();
   });
 
   it("keeps local development unblocked", async () => {
