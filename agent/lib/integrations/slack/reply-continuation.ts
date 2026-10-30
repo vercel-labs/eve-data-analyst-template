@@ -1,3 +1,4 @@
+import { interaction } from "eve/events";
 import { defineHook } from "eve/hooks";
 
 import { queriesForTurn, transferQueries } from "../../analyst/query-log";
@@ -15,7 +16,9 @@ export default defineHook({
       if (ctx.channel.kind !== "channel:slack") {
         return;
       }
+      const request = interaction(ctx.view, event.data.interactionId);
       const continued =
+        request?.request.kind === "budget" &&
         event.data.outcome === "accepted" &&
         event.data.response?.optionId === "continue";
       if (!continued) {

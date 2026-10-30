@@ -9,3 +9,5 @@ minimumReleaseAgeExclude:
 ignoredOptionalDependencies:
   - "@mongodb-js/zstd"
   - node-liblzma
+overrides:
+  guarded-fetch>undici: 7.29.1

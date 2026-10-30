@@ -204,7 +204,7 @@ Cost estimates depend on your data and hardware, so the default only catches ver
 
 [agent/instructions.md](agent/instructions.md) sets the agent's persona, answer format, chart choices, and writing style.
 
-[agent/agent.ts](agent/agent.ts) sets the model and session limits. The template uses Claude Opus 5.5 with medium reasoning, which writes reliable SQL. Use `reasoning: "high"` for complex analysis such as cohorts and retention, or a faster model for quick lookups. To cap spending per conversation, add `maxTokenCostUsdPerSession` to `limits`. When a conversation reaches a limit, eve asks whether to continue.
+[agent/agent.ts](agent/agent.ts) sets the model and session limits. The template uses Claude Opus 5.5 with medium reasoning, which writes reliable SQL. Use `reasoning: "high"` for complex analysis such as cohorts and retention, or a faster model for quick lookups. To add a model-cost limit, add `(window.costUsd ?? 0) >= 1` as another condition in the `limits.sessionUsage` callback. `costUsd` is the model-token cost reported by AI Gateway, so it can be unset. The callback receives `window`, the usage since the last approved continuation. Selecting **Continue** starts a fresh window while keeping the session's lifetime usage in `total`.
 
 ## Customize what the agent remembers
 
