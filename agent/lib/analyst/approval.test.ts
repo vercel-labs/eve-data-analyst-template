@@ -227,7 +227,7 @@ const respond = (
   );
 
 describe(respondToRunSqlApproval, () => {
-  it.each(["approve", "cancel"] as const)(
+  it.each(["approve", "deny"] as const)(
     "lets the asker %s",
     async (decision) => {
       await expect(respond({ decision })).resolves.toStrictEqual({

@@ -11,20 +11,20 @@ const pendingResume = defineState<string | null>(
 
 export default defineHook({
   events: {
-    "input.resolved"(event, ctx) {
+    "interaction.settled"(event, ctx) {
       if (ctx.channel.kind !== "channel:slack") {
         return;
       }
-      const continued = event.data.resolutions.some(
-        (resolution) =>
-          resolution.kind === "session-limit" &&
-          resolution.outcome === "answered" &&
-          resolution.response?.optionId === "continue"
-      );
+      const continued =
+        event.data.outcome === "accepted" &&
+        event.data.response?.optionId === "continue";
       if (!continued) {
         return;
       }
-      const sourceTurnId = event.data.turnId;
+      const sourceTurnId = event.scope?.turnId;
+      if (!sourceTurnId) {
+        return;
+      }
       if (
         visualizationReceipts.get()?.turnId === sourceTurnId ||
         queriesForTurn(sourceTurnId).length > 0

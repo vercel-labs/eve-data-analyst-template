@@ -1,5 +1,6 @@
 import { postCompletedSlackReply } from "eve/channels/slack";
 import type { SlackRendererEvents } from "eve/channels/slack";
+import { z } from "zod";
 
 import { queriesForTurn } from "../../analyst/query-log";
 import {
@@ -45,48 +46,52 @@ export const replyDelivery = { post: postCompletedSlackReply };
  * step retries, so a delivery receipt keeps the notice to one post per turn.
  */
 export const replyEvents = {
-  async "message.completed"(event, channel, _ctx, renderNext) {
-    if (event.finishReason === "tool-calls") {
-      await renderNext();
-      return;
+  async "content.completed"(event, ctx, next) {
+    const { kind, phase, value } = event.data;
+    const text = z.string().safeParse(value);
+    if (kind !== "text" || phase !== "reply" || !text.success) {
+      return await next();
     }
-    channel.state.pendingToolCallMessage = null;
-
     const receipt = visualizationReceipts.get();
-    if (receipt?.turnId === event.turnId && receipt.posted && !receipt.failed) {
+    const turnId = event.scope?.turnId;
+    if (
+      !turnId ||
+      (receipt?.turnId === turnId && receipt.posted && !receipt.failed)
+    ) {
       return;
     }
-    const queries = queriesForTurn(event.turnId);
+    const queries = queriesForTurn(turnId);
     const attachment = sqlAttachmentBlock(queries);
-    if (!(event.message && attachment)) {
-      await renderNext();
-      return;
+    if (!attachment) {
+      return await next();
     }
-    await replyDelivery.post(channel, {
-      blocks: [{ text: event.message, type: "markdown" }, attachment],
-      markdown: `${event.message}${sqlAttachmentMarkdown(queries)}`,
-      text: event.message,
+    await replyDelivery.post(ctx.channel, {
+      blocks: [{ text: text.data, type: "markdown" }, attachment],
+      markdown: `${text.data}${sqlAttachmentMarkdown(queries)}`,
+      text: text.data,
     });
   },
-  async "turn.cancelled"(event, channel, ctx, renderNext) {
-    try {
-      if (
-        conflictsWithThreadRoles(ctx.session.auth.current) &&
-        !noticeDeliveries.get()[event.turnId]
-      ) {
-        const posted = await channel.thread.post(THREAD_ROLE_NOTICE);
-        if (posted.raw.ok !== true || !posted.id) {
-          throw new Error(
-            "Could not confirm delivery of the thread role notice."
-          );
-        }
-        noticeDeliveries.update((current) =>
-          withRecentEntry(current, event.turnId, posted.id, MAX_TRACKED_NOTICES)
+  async "turn.settled"(event, ctx, next) {
+    if (
+      event.data.outcome === "cancelled" &&
+      conflictsWithThreadRoles(ctx.session.auth.current) &&
+      !noticeDeliveries.get()[event.data.turnId]
+    ) {
+      const posted = await ctx.channel.thread.post(THREAD_ROLE_NOTICE);
+      if (posted.raw.ok !== true || !posted.id) {
+        throw new Error(
+          "Could not confirm delivery of the thread role notice."
         );
       }
-    } finally {
-      // eve's default still clears the thread status when the notice fails.
-      await renderNext();
+      noticeDeliveries.update((current) =>
+        withRecentEntry(
+          current,
+          event.data.turnId,
+          posted.id,
+          MAX_TRACKED_NOTICES
+        )
+      );
     }
+    return next();
   },
 } satisfies SlackRendererEvents;

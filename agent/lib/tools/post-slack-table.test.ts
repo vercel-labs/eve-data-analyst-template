@@ -215,7 +215,11 @@ beforeEach(installTestState);
 
 beforeEach(() => {
   vi.spyOn(slackApi, "request").mockImplementation(postMock);
-  vi.spyOn(slackApi, "credentials").mockReturnValue({ botToken: "test-token" });
+  vi.spyOn(slackApi, "credentials").mockReturnValue({
+    botToken: "test-token",
+    // SAFETY: The test stubs outbound credentials and never reads Connect metadata.
+    vercelConnect: {} as never,
+  });
 });
 
 describe("bounded table fallback", () => {
@@ -274,7 +278,7 @@ describe("bounded table fallback", () => {
       failed: false,
       posted: true,
     });
-    const harness = messageCompletedHarness(replyEvents["message.completed"]);
+    const harness = messageCompletedHarness(replyEvents["content.completed"]);
     await harness.complete();
     expect(harness.next).not.toHaveBeenCalled();
   });

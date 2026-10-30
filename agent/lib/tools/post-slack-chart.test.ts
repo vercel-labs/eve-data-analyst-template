@@ -359,5 +359,9 @@ beforeEach(installTestState);
 
 beforeEach(() => {
   vi.spyOn(slackApi, "request").mockImplementation(postMock);
-  vi.spyOn(slackApi, "credentials").mockReturnValue({ botToken: "test-token" });
+  vi.spyOn(slackApi, "credentials").mockReturnValue({
+    botToken: "test-token",
+    // SAFETY: The test stubs outbound credentials and never reads Connect metadata.
+    vercelConnect: {} as never,
+  });
 });

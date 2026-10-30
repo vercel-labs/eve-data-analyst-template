@@ -27,10 +27,10 @@
     "knip": "knip"
   },
   "dependencies": {
-    "@vercel/connect": "2.2.0",
+    "@vercel/connect": "2.5.2",
     "ai": "^7.0.128",
-    "eve": "^0.75.0",
-    "just-bash": "3.1.0",
+    "eve": "^1.0.0-rc.0",
+    "just-bash": "3.6.0",
     "pg": "^8.23.1",
     "zod": "4.5.4"
   },

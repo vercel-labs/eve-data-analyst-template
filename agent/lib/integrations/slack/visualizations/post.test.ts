@@ -57,7 +57,11 @@ beforeEach(() => {
   installTestState();
   testState.reset();
   vi.stubEnv("SLACK_CONNECTOR", "slack/test");
-  credentials.mockReturnValue({ botToken: "test-token" });
+  credentials.mockReturnValue({
+    botToken: "test-token",
+    // SAFETY: The test stubs outbound credentials and never reads Connect metadata.
+    vercelConnect: {} as never,
+  });
   post.mockResolvedValue({ ok: true });
 });
 

@@ -13,7 +13,6 @@ import {
   createSlackIdentityResolver,
   formatSlackIdentityContext,
 } from "./identity";
-import { createInputRequestEvents } from "./input-requests";
 import type { SlackInputRequestsConfig } from "./input-requests";
 import { replyEvents } from "./replies";
 
@@ -263,8 +262,9 @@ export const createSlackChannel = (config: CreateSlackChannelConfig = {}) => {
     // Caller renderers stay outermost so they can wrap the shared rendering.
     renderers: [
       ...(channelConfig.renderers ?? []),
+      ...(inputRequests ? [inputRequests] : []),
       {
-        events: { ...replyEvents, ...createInputRequestEvents(inputRequests) },
+        events: replyEvents,
       },
     ],
     threadContext,
