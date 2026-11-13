@@ -3,9 +3,9 @@ import type { callSlackApi } from "eve/channels/slack";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { recordQuery } from "../../../analyst/query-log";
-import { installTestState, testState } from "../../../testing/state";
-import { slackApi } from "../api";
+import { recordQuery } from "../../analyst/query-log";
+import { toolContext } from "../../testing/session";
+import { installTestState, testState } from "../../testing/state";
 import {
   visualizationDelivery,
   postVisualization,
@@ -19,19 +19,13 @@ const { credentials, post, record } = vi.hoisted(() => ({
   record: vi.fn<typeof recordVisualizationDelivery>(),
 }));
 
-const ctx = {
-  session: {
-    auth: {
-      current: {
-        attributes: { channel_id: "C_CURRENT", thread_ts: "999.000" },
-      },
-      initiator: {
-        attributes: { channel_id: "C_ORIGIN", thread_ts: "123.456" },
-      },
-    },
-    turn: { id: "turn-1" },
+/* A session on the Slack thread C_ORIGIN/123.456. */
+const ctx = toolContext({
+  channel: {
+    kind: "channel:slack",
+    metadata: { channelId: "C_ORIGIN", threadTs: "123.456" },
   },
-} satisfies Parameters<typeof postVisualization>[0];
+});
 const message = {
   blocks: [
     { text: { text: "Rendered data", type: "plain_text" }, type: "section" },
@@ -96,7 +90,7 @@ describe("visualization posting", () => {
     );
   });
 
-  it("posts once to the session origin and returns only a delivery receipt", async () => {
+  it("posts once to the session's thread and returns only a delivery receipt", async () => {
     const result = await postVisualization(ctx, message);
     expect(credentials).toHaveBeenCalledExactlyOnceWith("slack/test");
     expect(post).toHaveBeenCalledExactlyOnceWith({
@@ -118,42 +112,25 @@ describe("visualization posting", () => {
     expect(record).toHaveBeenCalledExactlyOnceWith("turn-1", true);
   });
 
-  it("uses current auth when the session has no original Slack thread", async () => {
-    const result = await postVisualization(
-      {
-        session: {
-          ...ctx.session,
-          auth: { ...ctx.session.auth, initiator: null },
-        },
-      },
-      message
-    );
-    expect(result).toEqual({
-      channel: "C_CURRENT",
-      posted: true,
-      threadTs: "999.000",
-    });
-    expect(post.mock.calls[0][0].body).toMatchObject({
-      channel: "C_CURRENT",
-      thread_ts: "999.000",
-    });
-  });
-
-  it("records missing thread context without loading credentials or calling Slack", async () => {
-    const result = await postVisualization(
-      {
-        session: { ...ctx.session, auth: { current: null, initiator: null } },
-      },
-      message
-    );
-    expect(result).toEqual({
-      error: "The current session has no Slack thread to post to.",
-      posted: false,
-    });
-    expect(credentials).not.toHaveBeenCalled();
-    expect(post).not.toHaveBeenCalled();
-    expect(record).toHaveBeenCalledExactlyOnceWith("turn-1", false);
-  });
+  it.each([
+    ["another channel", { kind: "channel:eve" as const, metadata: {} }],
+    [
+      "a Slack session without a thread",
+      { kind: "channel:slack" as const, metadata: { channelId: "C_ORIGIN" } },
+    ],
+  ])(
+    "records missing thread context on %s without loading credentials or calling Slack",
+    async (_name, channel) => {
+      const result = await postVisualization(toolContext({ channel }), message);
+      expect(result).toEqual({
+        error: "The current session has no Slack thread to post to.",
+        posted: false,
+      });
+      expect(credentials).not.toHaveBeenCalled();
+      expect(post).not.toHaveBeenCalled();
+      expect(record).toHaveBeenCalledExactlyOnceWith("turn-1", false);
+    }
+  );
 
   it("records fallback success only after the text-only post resolves", async () => {
     post.mockResolvedValueOnce({ error: "invalid_blocks", ok: false });
@@ -417,7 +394,9 @@ describe("visualization posting", () => {
 });
 
 beforeEach(() => {
-  vi.spyOn(slackApi, "request").mockImplementation(post);
-  vi.spyOn(slackApi, "credentials").mockImplementation(credentials);
+  vi.spyOn(visualizationDelivery, "request").mockImplementation(post);
+  vi.spyOn(visualizationDelivery, "credentials").mockImplementation(
+    credentials
+  );
   vi.spyOn(visualizationDelivery, "record").mockImplementation(record);
 });

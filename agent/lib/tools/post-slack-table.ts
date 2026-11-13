@@ -1,11 +1,11 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
+import { escapeMrkdwnCode } from "../slack-text";
 import {
   postVisualization,
   visualizationOutputSchema,
-} from "../integrations/slack/visualizations/post";
-import { escapeMrkdwnCode } from "../slack-text";
+} from "../slack/visualizations/post";
 import { isString } from "../values";
 
 /**
@@ -197,7 +197,7 @@ const fallbackText = (
  * Tool that posts a table to the current Slack thread.
  *
  * @remarks
- * Uses the thread coordinates from session auth, never model-supplied channel values. Renders the
+ * Uses the thread the Slack channel serves, never model-supplied channel values. Renders the
  * table as a Slack `data_table` block, falling back to fixed-width text if Slack rejects the blocks.
  * Successful delivery ends the turn without calling the model again, so no final reply follows.
  */

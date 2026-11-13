@@ -1,9 +1,9 @@
-import { defineState } from "../../../state";
+import { defineState } from "../../state";
 
 /**
  * Table and chart delivery outcomes for one turn. Suppress final prose only after successful
- * delivery with no failed visualization attempts. Explicit session-limit continuations
- * transfer ownership to the resumed turn without resetting outcomes.
+ * delivery with no failed visualization attempts. Continuing past the session usage limit resumes
+ * the same turn, so its outcomes still apply.
  */
 export const visualizationReceipts = defineState<{
   turnId: string;

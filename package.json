@@ -29,7 +29,7 @@
   "dependencies": {
     "@vercel/connect": "2.2.0",
     "ai": "^7.0.128",
-    "eve": "^0.75.0",
+    "eve": "1.0.0-rc.16",
     "just-bash": "3.1.0",
     "pg": "^8.23.1",
     "zod": "4.5.4"

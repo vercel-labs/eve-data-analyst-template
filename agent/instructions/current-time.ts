@@ -34,21 +34,21 @@ export const describeCurrentTime = (now: Date, timeZone: string): string => {
 /**
  * Appends a time reference in UTC and the reporting time zone to conversation history at each turn.
  *
- * @returns Dynamic user-role instructions resolved when each turn starts.
+ * @returns Dynamic user-role instructions computed once per turn.
  * @remarks
  * Previous timestamps remain unchanged, preserving the existing prompt
  * prefix for caching. The timestamp represents turn start, not a live clock.
  * Relative periods such as "last month" are resolved in the reporting time zone.
  */
 export const currentTimeInstructions = () =>
-  defineDynamic({
-    events: {
-      "turn.started": () =>
-        defineInstructions({
-          content: describeCurrentTime(new Date(), reportingTimeZone()),
-          role: "user",
-        }),
-    },
-  });
+  defineDynamic(async (ctx) =>
+    defineInstructions({
+      // Memoized per turn, so every model call in the turn sees the same text and history gets one entry per turn.
+      content: await ctx.memo(["current-time", ctx.turn?.id ?? null], () =>
+        describeCurrentTime(new Date(), reportingTimeZone())
+      ),
+      role: "user",
+    })
+  );
 
 export default currentTimeInstructions();
