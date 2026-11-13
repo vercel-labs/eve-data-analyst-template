@@ -1,5 +1,5 @@
 /**
- * Shapes of Slack IDs that role resolution, memory scopes, and profile lookups accept.
+ * Shapes of Slack IDs that role resolution and memory scopes accept.
  *
  * @packageDocumentation
  */

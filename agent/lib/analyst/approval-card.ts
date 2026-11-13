@@ -3,17 +3,26 @@
  *
  * @packageDocumentation
  */
-import { inputRequestButtons } from "#lib/integrations/slack/input-requests";
-import type { SlackInputRequestsConfig } from "#lib/integrations/slack/input-requests";
+import { ANSWER_ACTION_PREFIX, defineSlackRenderer } from "eve/channels/slack";
+import type { BlockKitBlock } from "eve/channels/slack";
+import { APPROVE_OPTION_ID, DENY_OPTION_ID } from "eve/events";
+import { z } from "zod";
+
 import { escapeMrkdwn } from "#lib/slack-text";
 import { defineState } from "#lib/state";
-import { isString, withRecentEntry } from "#lib/values";
+import { isObject, isString, withRecentEntry } from "#lib/values";
 
 /** Longest SQL excerpt shown on the card. */
 const MAX_CARD_SQL = 2500;
 
 /** Most estimates kept; well above the approvals one turn can leave pending. */
 const MAX_PENDING_ESTIMATES = 50;
+
+/** Button labels for eve's approve and deny options. */
+const BUTTON_LABELS = new Map([
+  [APPROVE_OPTION_ID, "Run query"],
+  [DENY_OPTION_ID, "Cancel"],
+]);
 
 /** Planner estimate recorded when a query needs approval. */
 export interface QueryEstimate {
@@ -28,6 +37,12 @@ const estimates = defineState<Record<string, QueryEstimate>>(
   "analyst.query-estimates",
   () => ({})
 );
+
+/* The run_sql input fields the card shows; anything else falls back to defaults. */
+const cardInputSchema = z.object({
+  purpose: z.string().optional(),
+  sql: z.string().optional(),
+});
 
 /**
  * Records the estimate shown on a pending approval card.
@@ -62,20 +77,51 @@ const plain = (text: string) => ({
   type: "plain_text" as const,
 });
 
-/** Renders run_sql approvals with the query's purpose, cost estimate, SQL, and who may answer. */
-export const runSqlApprovalCard: SlackInputRequestsConfig = {
-  render(request) {
-    if (
-      request.kind !== "tool-approval" ||
-      request.action.toolName !== "run_sql"
-    ) {
-      return;
+const isBlock = (value: unknown): value is BlockKitBlock => isObject(value);
+
+/* eve's own controls in its default card, wherever they're nested. */
+const eveControls = (blocks: readonly unknown[]): BlockKitBlock[] =>
+  blocks.filter(isBlock).flatMap((block): BlockKitBlock[] => {
+    const actionId = block.action_id;
+    if (isString(actionId) && actionId.startsWith(ANSWER_ACTION_PREFIX)) {
+      return [block];
     }
-    const { callId, input } = request.action;
-    const sql = isString(input.sql) ? input.sql : "";
-    const purpose =
-      isString(input.purpose) && input.purpose ? input.purpose : "Run a query";
-    const saved = estimates.get()[callId];
+    return Object.values(block).flatMap((value) =>
+      Array.isArray(value) ? eveControls(value) : []
+    );
+  });
+
+/**
+ * Renders run_sql approvals with the query's purpose, cost estimate, SQL, and who may answer.
+ *
+ * @remarks Restyles only open, unanswered run_sql approvals. It keeps eve's buttons with their
+ * action IDs and values, relabeled "Run query" and "Cancel". Answered and settled cards, other
+ * requests, and cards whose controls aren't plain buttons use eve's default, which shows the
+ * answer and who gave it.
+ */
+export const runSqlApprovalCard = defineSlackRenderer({
+  interactionCard(card, renderDefault) {
+    const parts = renderDefault(card);
+    const { answer, call, request, status } = card.interaction;
+    if (
+      request.kind !== "approval" ||
+      call?.name !== "run_sql" ||
+      status !== "open" ||
+      answer !== undefined
+    ) {
+      return parts;
+    }
+    const controls = eveControls(parts.controls.blocks);
+    if (
+      controls.length === 0 ||
+      controls.some((control) => control.type !== "button")
+    ) {
+      return parts;
+    }
+    const input = cardInputSchema.safeParse(call.input).data;
+    const sql = input?.sql ?? "";
+    const purpose = input?.purpose || "Run a query";
+    const saved = estimates.get()[call.callId];
     // Never show an estimate recorded for different SQL.
     const estimate = saved?.sql === sql ? saved : undefined;
     const details = estimate
@@ -84,31 +130,36 @@ export const runSqlApprovalCard: SlackInputRequestsConfig = {
     const who = estimate?.askerSlackUserId
       ? `Only <@${estimate.askerSlackUserId}> can run or cancel this query.`
       : "Only the person who asked can run or cancel this query.";
+    const buttons = controls.map((button) => {
+      const label = isString(button.value)
+        ? BUTTON_LABELS.get(button.value)
+        : undefined;
+      return label ? { ...button, text: plain(label) } : button;
+    });
     return {
-      blocks: [
-        { text: plain(`Approve query: ${purpose}`), type: "section" },
-        { elements: [{ text: details, type: "plain_text" }], type: "context" },
-        {
-          elements: [
-            {
-              elements: [{ text: excerpt(sql), type: "text" }],
-              type: "rich_text_preformatted",
-            },
-          ],
-          type: "rich_text",
-        },
-        {
-          elements: inputRequestButtons(request, {
-            approve: "Run query",
-            cancel: "Cancel",
-          }),
-          type: "actions",
-        },
-        { elements: [{ text: who, type: "mrkdwn" }], type: "context" },
-      ],
-      text: escapeMrkdwn(
-        `Approve query: ${purpose}\n${details}\n${excerpt(sql)}`
-      ),
+      controls: {
+        blocks: [
+          { text: plain(`Approve query: ${purpose}`), type: "section" },
+          {
+            elements: [{ text: details, type: "plain_text" }],
+            type: "context",
+          },
+          {
+            elements: [
+              {
+                elements: [{ text: excerpt(sql), type: "text" }],
+                type: "rich_text_preformatted",
+              },
+            ],
+            type: "rich_text",
+          },
+          { elements: buttons, type: "actions" },
+          { elements: [{ text: who, type: "mrkdwn" }], type: "context" },
+        ],
+        text: escapeMrkdwn(
+          `Approve query: ${purpose}\n${details}\n${excerpt(sql)}`
+        ),
+      },
     };
   },
-};
+});

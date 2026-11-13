@@ -2,11 +2,11 @@ import type { callSlackApi } from "eve/channels/slack";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { slackApi } from "../integrations/slack/api";
-import { replyEvents } from "../integrations/slack/replies";
-import { visualizationReceipts } from "../integrations/slack/visualizations/receipts";
+import { analystReplies } from "../slack/replies";
+import { visualizationDelivery } from "../slack/visualizations/post";
+import { visualizationReceipts } from "../slack/visualizations/receipts";
+import { completeReply } from "../testing/renderer";
 import { isCallable, slackAuth, toolContext } from "../testing/session";
-import { messageCompletedHarness } from "../testing/slack";
 import { testState, installTestState } from "../testing/state";
 import tool from "./post-slack-table";
 
@@ -214,8 +214,10 @@ describe("Slack table link cells", () => {
 beforeEach(installTestState);
 
 beforeEach(() => {
-  vi.spyOn(slackApi, "request").mockImplementation(postMock);
-  vi.spyOn(slackApi, "credentials").mockReturnValue({ botToken: "test-token" });
+  vi.spyOn(visualizationDelivery, "request").mockImplementation(postMock);
+  vi.spyOn(visualizationDelivery, "credentials").mockReturnValue({
+    botToken: "test-token",
+  });
 });
 
 describe("bounded table fallback", () => {
@@ -274,9 +276,12 @@ describe("bounded table fallback", () => {
       failed: false,
       posted: true,
     });
-    const harness = messageCompletedHarness(replyEvents["message.completed"]);
-    await harness.complete();
-    expect(harness.next).not.toHaveBeenCalled();
+    const { done, next } = completeReply(
+      analystReplies.events ?? {},
+      "Here is the result."
+    );
+    await done;
+    expect(next).not.toHaveBeenCalled();
   });
 
   it("shortens oversized URL cells visibly and neutralizes embedded fences", async () => {

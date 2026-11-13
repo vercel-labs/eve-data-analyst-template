@@ -1,20 +1,42 @@
+import { connectSlackCredentials } from "@vercel/connect/eve";
+import { callSlackApi } from "eve/channels/slack";
 import type { SlackApiResponse } from "eve/channels/slack";
+import type { ToolContext } from "eve/tools";
 import { z } from "zod";
 
-import { queriesForTurn } from "../../../analyst/query-log";
+import { queriesForTurn } from "../../analyst/query-log";
 import {
   sqlAttachmentBlock,
   sqlAttachmentMrkdwn,
   sqlAttachmentPlainBlocks,
-} from "../../../analyst/sql-attachment";
-import type { JsonObject } from "../../../json";
-import { requireEnv } from "../../../utils/env";
-import { slackApi } from "../api";
-import { slackThreadFromSession } from "../session";
-import type { SlackSessionContext } from "../session";
+} from "../../analyst/sql-attachment";
+import type { JsonObject } from "../../json";
+import { requireEnv } from "../../utils/env";
+import { isString } from "../../values";
 import { recordVisualizationDelivery } from "./receipts";
 
-export const visualizationDelivery = { record: recordVisualizationDelivery };
+/** Slack credentials, Web API calls, and delivery receipts, swappable in tests. */
+export const visualizationDelivery = {
+  credentials: connectSlackCredentials,
+  record: recordVisualizationDelivery,
+  request: callSlackApi,
+};
+
+/** The slice of eve's tool context a visualization reads. */
+export type VisualizationContext = Pick<ToolContext, "channel" | "session">;
+
+/* The Slack thread serving the session, from the channel's metadata. */
+const slackThread = (
+  ctx: VisualizationContext
+): { channelId: string; ts: string } | null => {
+  if (ctx.channel.kind !== "channel:slack") {
+    return null;
+  }
+  const { channelId, threadTs } = ctx.channel.metadata;
+  return isString(channelId) && channelId && isString(threadTs) && threadTs
+    ? { channelId, ts: threadTs }
+    : null;
+};
 
 const BLOCK_ERROR = /block/iu;
 
@@ -64,9 +86,9 @@ export const visualizationOutputSchema = z.object({
 });
 
 /**
- * Posts one visualization message to the authenticated session's Slack thread.
+ * Posts one visualization message to the Slack thread serving the session.
  *
- * @param ctx - Session origin and current turn used to record delivery.
+ * @param ctx - The serving channel, whose metadata names the Slack thread, and the current turn used to record delivery.
  * @param message - Slack blocks and their readable text alternative, including any truncation notice.
  * @returns Delivery outcome, including whether Slack required the text fallback.
  * @remarks Adds the turn's folded "SQL query" section below the visualization,
@@ -76,10 +98,10 @@ export const visualizationOutputSchema = z.object({
  * When the delivered message can't show the SQL, posts it as a separate text
  * message, whose failure doesn't change the outcome. Thrown errors and other
  * rejections are not retried because delivery may be uncertain.
- * Records success/failure for final-reply suppression and session continuation.
+ * Records success or failure for final-reply suppression.
  */
 export const postVisualization = async (
-  ctx: SlackSessionContext & { session: { turn: { id: string } } },
+  ctx: VisualizationContext,
   message: { blocks: JsonObject[]; text: string }
 ): Promise<z.infer<typeof visualizationOutputSchema>> => {
   const turnId = ctx.session.turn.id;
@@ -89,7 +111,7 @@ export const postVisualization = async (
   const sqlText = sqlAttachmentMrkdwn(queries);
   const textHasSql = message.text.length + sqlText.length <= MAX_MESSAGE_TEXT;
   const text = textHasSql ? `${message.text}${sqlText}` : message.text;
-  const thread = slackThreadFromSession(ctx);
+  const thread = slackThread(ctx);
   if (!thread) {
     visualizationDelivery.record(turnId, false);
     return {
@@ -103,11 +125,11 @@ export const postVisualization = async (
     threadTs: thread.ts,
   };
   try {
-    const { botToken } = slackApi.credentials(
+    const { botToken } = visualizationDelivery.credentials(
       requireEnv("SLACK_CONNECTOR", "slack/your-agent")
     );
     const post = (body: JsonObject) =>
-      slackApi.request({
+      visualizationDelivery.request({
         body: {
           channel: thread.channelId,
           thread_ts: thread.ts,

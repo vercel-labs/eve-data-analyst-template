@@ -1,11 +1,11 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
+import { escapeMrkdwn } from "../slack-text";
 import {
   postVisualization,
   visualizationOutputSchema,
-} from "../integrations/slack/visualizations/post";
-import { escapeMrkdwn } from "../slack-text";
+} from "../slack/visualizations/post";
 
 /* Trimmed, nonempty Slack category, series, or pie label, limited to 20 characters. */
 const labelSchema = z.string().trim().min(1).max(20);
@@ -208,15 +208,15 @@ const postSlackChartInputSchema = z.strictObject({
 /**
  * Posts one native Slack chart using data already retrieved or supplied by the user.
  *
- * @remarks Eve validates input before execution. Uses thread coordinates from
- * session auth, never model-supplied destinations. Posts a native block and its
+ * @remarks Eve validates input before execution. Uses the thread the Slack
+ * channel serves, never model-supplied destinations. Posts a native block and its
  * text alternative through {@link postVisualization}; an explicit block rejection
  * gets one text-only fallback, while uncertain delivery is not retried.
  * Successful delivery ends the turn without calling the model again. When the
  * model's step also calls other tools, the turn continues and successful delivery
  * suppresses duplicate final replies only when the same turn has no failed
- * visualization attempts. Shared receipts retain these outcomes
- * across explicit session-limit continuations. Results contain delivery metadata,
+ * visualization attempts. Continuing past the session usage limit resumes the
+ * same turn, so these outcomes still apply. Results contain delivery metadata,
  * not a copy of the chart data. No sandbox or image generation is involved.
  */
 export default defineTool({
@@ -227,7 +227,7 @@ export default defineTool({
    * Render and deliver the validated chart to the current Slack thread.
    *
    * @param input - Parsed chart, title, and nullable summary.
-   * @param ctx - Eve context supplying the authenticated thread and receipt scope.
+   * @param ctx - Eve context supplying the Slack thread and receipt scope.
    * @returns Delivery receipt indicating success, failure, or text-fallback use.
    */
   execute(input, ctx) {

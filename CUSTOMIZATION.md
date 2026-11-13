@@ -14,7 +14,7 @@ Choose the task you want to complete:
 - [Customize what the agent remembers](#customize-what-the-agent-remembers)
 - [Control Slack replies](#control-slack-replies)
 - [Connect Stripe or PostHog](#connect-stripe-or-posthog)
-- [Control Slack profile lookups](#control-slack-profile-lookups)
+- [Control Slack name lookups](#control-slack-name-lookups)
 - [Remove features](#remove-features)
 - [Test and deploy your changes](#test-and-deploy-your-changes)
 - [Set up an existing project](#set-up-an-existing-project)
@@ -45,7 +45,6 @@ Enter the value when prompted, and choose the Vercel environments that should us
 | `ANALYST_LOGIN_PASSWORD` | Generated | Password for a read-only user created with `pnpm db:setup-sql` |
 | `SLACK_CONNECTOR` | Set by Vercel Connect | Slack connector the agent posts with |
 | `SLACK_AUTO_REPLY_CHANNEL_IDS` | Unset | Slack channels where the agent answers every new post |
-| `SLACK_IDENTITY_EXCLUDED_USER_IDS` | Unset | Slack users to leave out of profile lookups |
 
 An empty value counts as unset and uses the default, with one exception: an empty `ANALYST_DEFAULT_ROLE` turns on allowlist mode. The agent checks all of its settings the first time it queries and lists every problem in one message. `pnpm db:doctor` runs the same checks, and checks the database, from your machine.
 
@@ -204,7 +203,7 @@ Cost estimates depend on your data and hardware, so the default only catches ver
 
 [agent/instructions.md](agent/instructions.md) sets the agent's persona, answer format, chart choices, and writing style.
 
-[agent/agent.ts](agent/agent.ts) sets the model and session limits. The template uses Claude Opus 5.5 with medium reasoning, which writes reliable SQL. Use `reasoning: "high"` for complex analysis such as cohorts and retention, or a faster model for quick lookups. To cap spending per conversation, add `maxTokenCostUsdPerSession` to `limits`. When a conversation reaches a limit, eve asks whether to continue.
+[agent/agent.ts](agent/agent.ts) sets the model and session limits. The template uses Claude Opus 5.5 with medium reasoning, which writes reliable SQL. Use `reasoning: "high"` for complex analysis such as cohorts and retention, or a faster model for quick lookups. The `sessionUsage` limit asks whether to continue after 5 million new input tokens or 100,000 output tokens. To cap spending per conversation too, add a check on `window.costUsd`, such as `|| (window.costUsd ?? 0) >= 5`. When a conversation reaches a limit, eve asks whether to continue, and continuing starts a new window.
 
 ## Customize what the agent remembers
 
@@ -214,7 +213,7 @@ On Vercel, memory is stored in the private Blob store the deploy button created.
 
 ## Control Slack replies
 
-The agent replies when someone mentions it or sends it a direct message. In a thread it's already part of, it also answers follow-up messages from the person who started the conversation, as long as nobody else has joined. To have it answer every new post in certain channels, such as an `#ask-data` channel, list their channel IDs:
+The agent replies when someone mentions it or sends it a direct message. Other bots and Slack Workflows can mention it too. In a thread it's already part of, it also reads follow-up messages from the person who started the conversation, as long as nobody else has joined. It answers the ones meant for it and stays quiet for the rest, such as a thank-you, using the `no_reply` tool. To have it answer every new post in certain channels, such as an `#ask-data` channel, list their channel IDs:
 
 ```dotenv
 SLACK_AUTO_REPLY_CHANNEL_IDS=C0123ABCD,C0456EFGH
@@ -226,7 +225,7 @@ When the agent posts a chart or table, the headline answer appears as the chart'
 
 Answers that ran SQL end with a collapsed section titled "SQL query", or "SQL queries (2)" when there are several. It lists up to three queries with the tables each one read, and a "Data as of" time that Slack shows in each reader's time zone. The section lists the queries that ran successfully, exactly as they ran. If Slack rejects the section, the same SQL appears in the reply as a code block instead. For a chart or table, the agent first posts it again with the SQL shown open below it. When Slack rejects that too, or the message is too large, the agent posts the chart or table on its own and the SQL as a separate message. Plain text with the SQL is the last resort.
 
-To change the section's title or layout, edit `agent/lib/analyst/sql-attachment.ts`. The number of queries is set by `MAX_ATTACHED_QUERIES` in `agent/lib/analyst/query-log.ts`, and Slack's limit of 10 blocks per section keeps it at three or fewer. To show SQL inside the answer text instead, remove the section from `agent/lib/integrations/slack/replies.ts` and `agent/lib/integrations/slack/visualizations/post.ts`, and update the Answer format section of `agent/instructions.md`.
+To change the section's title or layout, edit `agent/lib/analyst/sql-attachment.ts`. The number of queries is set by `MAX_ATTACHED_QUERIES` in `agent/lib/analyst/query-log.ts`, and Slack's limit of 10 blocks per section keeps it at three or fewer. To show SQL inside the answer text instead, remove the section from `agent/lib/slack/replies.ts` and `agent/lib/slack/visualizations/post.ts`, and update the Answer format section of `agent/instructions.md`.
 
 ## Connect Stripe or PostHog
 
@@ -258,21 +257,19 @@ export default defineMcpClientConnection({
 
 The tool names above are examples. Check the current names in the service's documentation, or ask the agent in `pnpm dev` to list the connection's tools. To allow a tool that changes data only with a person's sign-off, add `approval: once()` from `eve/tools/approval` to the connection.
 
-## Control Slack profile lookups
+## Control Slack name lookups
 
-Before replying, the agent looks up the Slack profiles of the people in the thread, including anyone mentioned, and adds their names to the conversation. Email addresses stay out, and database access always comes from the verified Slack user ID.
+The agent sees the display name and real name of each person who writes in the thread, next to their Slack user ID. People who are only mentioned appear as user IDs. Email addresses stay out, and database access always comes from the verified Slack user ID.
 
-To leave certain accounts out of profile lookups, such as bots, list their Slack user IDs:
+The lookups need the `users:read` scope. If names don't appear, add `users:read` under **Bot Scopes** in the Slack connector's **Advanced** settings in Vercel Connect, then reinstall the app.
 
-```dotenv
-SLACK_IDENTITY_EXCLUDED_USER_IDS=U0123456789,U0987654321
-```
+To stop the lookups, remove `messageContext` from `agent/channels/slack.ts`. To add email addresses too, change it to `messageContext: { users: { email: true } }`, which also needs the `users:read.email` scope.
 
 ## Remove features
 
 | Feature | Files to remove or change |
 | --- | --- |
-| Slack | Remove `agent/channels/slack.ts`, `agent/tools/post_slack_chart.ts`, `agent/tools/post_slack_table.ts`, and `agent/hooks/reply-continuation.ts` |
+| Slack | Remove `agent/channels/slack.ts`, `agent/tools/post_slack_chart.ts`, `agent/tools/post_slack_table.ts`, and `agent/tools/no_reply.ts` |
 | Channel memory | Remove `agent/memory/channel-preferences.ts` |
 | All memory | Remove `agent/memory/` and the Memory section of `agent/instructions.md` |
 | Demo data | Remove `scripts/seed.ts`, `scripts/seed/generate.ts`, `scripts/seed/schema.ts`, and the `db:seed` script. The evals use `scripts/seed/sql.ts`, so remove `evals/` too, or rewrite the evals for your data. |

@@ -1,80 +1,84 @@
 import type { SessionAuthContext } from "eve/context";
+import { emptySessionView, foldEvents } from "eve/events";
 import type { HookContext, HookEvent } from "eve/hooks";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { localDevAuth, sessionContext, slackAuth } from "../testing/session";
+import { hookContext, localDevAuth, slackAuth } from "../testing/session";
 import { installTestState, testState } from "../testing/state";
 import hook from "./thread-role-guard";
 
-const actionResult = hook.events?.["action.result"];
+const callSettled = hook.events?.["call.settled"];
 const turnStarted = hook.events?.["turn.started"];
-if (!(actionResult && turnStarted)) {
-  throw new Error("Expected action.result and turn.started handlers.");
+if (!(callSettled && turnStarted)) {
+  throw new Error("Expected call.settled and turn.started handlers.");
 }
 
 const alice = slackAuth({ userId: "U0ALICE" });
 const bob = slackAuth({ userId: "U0BOB" });
 
-/* Stream metadata eve stamps on every recorded event. */
-const meta = { at: "2026-10-10T00:00:00.000Z", id: "event-1" };
-
-/* Hook context for a turn whose caller is `current`, with an observable cancel. */
-const hookContext = (current: SessionAuthContext) => {
-  const cancel = vi.fn<HookContext["cancel"]>();
-  const ctx: HookContext = {
-    ...sessionContext({ current }),
-    agent: { name: "test" },
-    cancel,
-    channel: { kind: "channel:slack" },
-  };
-  return { cancel, ctx };
-};
-
-interface ResultOptions {
-  isError?: boolean;
-  status?: HookEvent<"action.result">["data"]["status"];
+interface CallOptions {
+  kind?: "agent" | "tool";
+  outcome?: HookEvent<"call.settled">["data"]["outcome"];
   toolName?: string;
 }
 
-/* One tool call's result in turn-1. */
-const resultEvent = ({
-  isError,
-  status = "completed",
+/* Stream metadata on each recorded line. */
+const meta = (line: number) => ({
+  at: "2026-10-10T00:00:00.000Z",
+  endOfLine: true,
+  position: { index: 0, line },
+});
+
+/* One call in turn-1 that settled with `outcome`, and the session view that records it. */
+const settledCall = ({
+  kind = "tool",
+  outcome = "completed",
   toolName = "run_sql",
-}: ResultOptions = {}): HookEvent<"action.result"> => {
-  const result: HookEvent<"action.result">["data"]["result"] = {
-    callId: "call-1",
-    kind: "tool-result",
-    output: {},
-    toolName,
-  };
-  if (isError !== undefined) {
-    result.isError = isError;
-  }
-  return {
-    data: { result, sequence: 3, status, stepIndex: 1, turnId: "turn-1" },
-    meta,
-    type: "action.result",
-  };
+}: CallOptions = {}) => {
+  const settled = {
+    data: { callId: "call-1", outcome, output: {} },
+    scope: { turnId: "turn-1" },
+    type: "call.settled",
+  } satisfies HookEvent<"call.settled">;
+  const view = foldEvents(emptySessionView(), [
+    {
+      data: {
+        callId: "call-1",
+        capability: { kind, name: toolName },
+        input: {},
+        owner: { turnId: "turn-1" },
+      },
+      meta: meta(0),
+      scope: { turnId: "turn-1" },
+      type: "call.requested",
+    },
+    { ...settled, meta: meta(1) },
+  ]);
+  return { settled, view };
 };
 
 /* Start of a later turn in the same session. */
-const startedEvent = (turnId = "turn-2"): HookEvent<"turn.started"> => ({
-  data: { sequence: 6, turnId },
-  meta,
+const startedEvent = {
+  data: {
+    cause: { deliveryId: "delivery-2" },
+    follows: "turn-1",
+    turnId: "turn-2",
+  },
+  scope: { turnId: "turn-2" },
   type: "turn.started",
-});
+} satisfies HookEvent<"turn.started">;
 
-/* Runs one completed tool result as `caller`, then starts the next turn as `next`. */
-const queryThenStart = async (
+/* Settles one call as `caller`, then starts the next turn as `next`. */
+const callThenStart = async (
   caller: SessionAuthContext,
   next: SessionAuthContext,
-  options: ResultOptions = {}
+  options: CallOptions = {}
 ) => {
-  await actionResult(resultEvent(options), hookContext(caller).ctx);
-  const started = hookContext(next);
-  await turnStarted(startedEvent(), started.ctx);
-  return started.cancel;
+  const { settled, view } = settledCall(options);
+  await callSettled(settled, hookContext({ current: caller, view }));
+  const cancel = vi.fn<HookContext["cancel"]>();
+  await turnStarted(startedEvent, hookContext({ cancel, current: next }));
+  return cancel;
 };
 
 beforeEach(() => {
@@ -87,46 +91,49 @@ beforeEach(() => {
   );
 });
 
-describe("action.result", () => {
+describe("call.settled", () => {
   it.each(["run_sql", "describe_schema"])(
     "records the caller's role after a successful %s",
     async (toolName) => {
-      await actionResult(resultEvent({ toolName }), hookContext(alice).ctx);
+      const { settled, view } = settledCall({ toolName });
+      await callSettled(settled, hookContext({ current: alice, view }));
       expect(testState.get("analyst.thread-roles")).toStrictEqual({
         roles: ["analyst_finance"],
       });
     }
   );
 
-  it.each<[string, ResultOptions]>([
-    ["errors", { isError: true }],
-    ["failed calls", { status: "failed" }],
-    ["rejected calls", { status: "rejected" }],
+  it.each<[string, CallOptions]>([
+    ["failed calls", { outcome: "failed" }],
+    ["rejected calls", { outcome: "rejected" }],
+    ["interrupted calls", { outcome: "interrupted" }],
     ["other tools", { toolName: "post_slack_table" }],
+    ["agents named like a tool", { kind: "agent" }],
   ])("records nothing for %s", async (_name, options) => {
-    await actionResult(resultEvent(options), hookContext(alice).ctx);
+    const { settled, view } = settledCall(options);
+    await callSettled(settled, hookContext({ current: alice, view }));
     expect(testState.get("analyst.thread-roles")).toBeUndefined();
   });
 });
 
 describe("turn.started", () => {
   it("cancels a caller with a different role", async () => {
-    const cancel = await queryThenStart(alice, bob);
+    const cancel = await callThenStart(alice, bob);
     expect(cancel).toHaveBeenCalledOnce();
   });
 
   it("lets the same caller continue", async () => {
-    const cancel = await queryThenStart(alice, alice);
+    const cancel = await callThenStart(alice, alice);
     expect(cancel).not.toHaveBeenCalled();
   });
 
   it("lets anyone in when only failed queries ran", async () => {
-    const cancel = await queryThenStart(alice, bob, { isError: true });
+    const cancel = await callThenStart(alice, bob, { outcome: "failed" });
     expect(cancel).not.toHaveBeenCalled();
   });
 
   it("never cancels local development", async () => {
-    const cancel = await queryThenStart(localDevAuth(), localDevAuth());
+    const cancel = await callThenStart(localDevAuth(), localDevAuth());
     expect(cancel).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { testState, installTestState } from "../../../testing/state";
+import { testState, installTestState } from "../../testing/state";
 import { recordVisualizationDelivery, visualizationReceipts } from "./receipts";
 
 beforeEach(() => testState.reset());

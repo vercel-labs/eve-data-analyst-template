@@ -5,7 +5,11 @@
  *
  * @packageDocumentation
  */
+import type { InstrumentationChannel } from "eve/channels";
 import type { SessionAuthContext, SessionContext } from "eve/context";
+import { emptySessionView } from "eve/events";
+import type { SessionView } from "eve/events";
+import type { HookContext } from "eve/hooks";
 import type { ToolContext } from "eve/tools";
 import type {
   ApprovalContext,
@@ -131,26 +135,95 @@ export const sessionContext = ({
 });
 
 /**
+ * Builds the channel a session runs on, as the Slack channel's metadata projects it.
+ *
+ * @param auth - Principal whose Slack attributes name the thread; any other principal gets the eve HTTP channel.
+ * @returns A Slack channel with the principal's channel and thread, or the eve channel without metadata.
+ */
+const channelFor = (
+  auth: SessionAuthContext | null
+): InstrumentationChannel => {
+  if (auth?.authenticator !== "slack-webhook") {
+    return { kind: "channel:eve", metadata: {} };
+  }
+  const {
+    channel_id: channelId,
+    team_id: teamId,
+    thread_ts: threadTs,
+  } = auth.attributes;
+  return {
+    kind: "channel:slack",
+    metadata: { channelId, teamId, threadTs },
+  };
+};
+
+/**
  * Builds a complete public tool context for invoking a tool executor directly.
  *
- * @param options - Authentication overrides and the optional model-facing tool name.
- * @returns A context with fixed call identity, cancellation signal, and explicit unsupported connection access.
+ * @param options - Authentication overrides, the serving channel, and the optional model-facing tool name. The channel defaults to the initiator's Slack thread, then the current caller's.
+ * @returns A context with fixed call identity, cancellation signal, and explicit unsupported connection access and channel hand-offs.
  */
 export const toolContext = (
-  options: SessionOptions & { toolName?: string } = {}
-): ToolContext => ({
-  ...sessionContext(options),
-  abortSignal: new AbortController().signal,
-  callId: "call-1",
-  getToken: () => {
-    throw new Error("This test does not provide connection tokens.");
-  },
-  messages: [],
-  requireAuth: () => {
-    throw new Error("This test does not provide connection auth.");
-  },
-  toolName: options.toolName ?? "tool",
-});
+  options: SessionOptions & {
+    channel?: InstrumentationChannel;
+    toolName?: string;
+  } = {}
+): ToolContext => {
+  const session = sessionContext(options);
+  return {
+    ...session,
+    abortSignal: new AbortController().signal,
+    callId: "call-1",
+    channel:
+      options.channel ??
+      channelFor(
+        session.session.auth.initiator ?? session.session.auth.current
+      ),
+    getToken: () => {
+      throw new Error("This test does not provide connection tokens.");
+    },
+    messages: [],
+    requireAuth: () => {
+      throw new Error("This test does not provide connection auth.");
+    },
+    to: () => {
+      throw new Error("This test does not provide channel hand-offs.");
+    },
+    toolName: options.toolName ?? "tool",
+  };
+};
+
+/**
+ * Builds a public hook context for invoking a hook handler directly.
+ *
+ * @param options - Authentication overrides, the session view the handler reads, and an optional cancel spy.
+ * @returns A context with a fixed stream position and memo access that fails if unexpectedly used.
+ */
+export const hookContext = (
+  options: SessionOptions & {
+    cancel?: HookContext["cancel"];
+    view?: SessionView;
+  } = {}
+): HookContext => {
+  const session = sessionContext(options);
+  return {
+    ...session,
+    agent: { name: "test" },
+    cancel: options.cancel ?? (() => null),
+    channel: channelFor(session.session.auth.current),
+    memo: () => {
+      throw new Error("This test does not provide memo.");
+    },
+    now: new Date("2026-10-10T00:00:00.000Z"),
+    occurrence: {
+      abortSignal: new AbortController().signal,
+      idempotencyKey: "occurrence-1",
+    },
+    position: { index: 0, line: 0 },
+    turn: null,
+    view: options.view ?? emptySessionView(),
+  };
+};
 
 /**
  * Builds a public approval context for exercising request policies directly.
@@ -166,7 +239,6 @@ export const approvalContext = <TInput extends JsonObject>(
 ): ApprovalContext<TInput> => ({
   ...sessionContext(options),
   abortSignal: new AbortController().signal,
-  approvedTools: new Set(),
   callId: "call-1",
   // eve's conditional `ApprovalToolInput` does not resolve for a generic input.
   // SAFETY: TInput is constrained to JSON objects, which are the accepted tool-input branch of eve’s conditional approval type.
@@ -175,7 +247,7 @@ export const approvalContext = <TInput extends JsonObject>(
 });
 
 interface ApprovalResponseOptions<TInput> {
-  decision?: "approve" | "cancel";
+  decision?: "approve" | "deny";
   requester?: SessionAuthContext | null;
   responder?: SessionAuthContext;
   toolInput?: TInput;
@@ -206,8 +278,8 @@ export const approvalResponseContext = <TInput extends JsonObject>({
   },
   request: {
     callId: "call-1",
+    interactionId: "request-1",
     principal: requester,
-    requestId: "request-1",
     // SAFETY: TInput is constrained to JSON objects, which are the accepted tool-input branch of eve's conditional approval type.
     toolInput:
       toolInput as ApprovalResponseContext<TInput>["request"]["toolInput"],

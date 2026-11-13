@@ -44,15 +44,3 @@ export const queriesForTurn = (turnId: string): readonly LoggedQuery[] => {
   const current = turnQueries.get();
   return current?.turnId === turnId ? current.queries : [];
 };
-
-/**
- * Moves a turn's recorded queries to the turn that resumes it.
- *
- * @param fromTurnId - Turn that recorded the queries.
- * @param toTurnId - Turn that will post the reply.
- */
-export const transferQueries = (fromTurnId: string, toTurnId: string): void => {
-  turnQueries.update((current) =>
-    current?.turnId === fromTurnId ? { ...current, turnId: toTurnId } : current
-  );
-};
