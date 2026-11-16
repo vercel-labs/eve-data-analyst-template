@@ -7,13 +7,16 @@ import type {
 import type { SessionAuthContext } from "eve/context";
 import { describe, expect, it, vi } from "vitest";
 
+import { runSqlApprovalCard } from "../../analyst/approval-card";
 import { slackAuth } from "../../testing/session";
 import { inboundContext, slackAuthor, slackMessage } from "../../testing/slack";
 import {
   createSlackInboundHandlers,
   handleExplicitInvocation,
   selectInboundHandlers,
+  slackChannelSettings,
 } from "./channel";
+import { replyEvents } from "./replies";
 
 type Handler = NonNullable<SlackChannelConfig["onMessage"]>;
 
@@ -166,6 +169,39 @@ describe(selectInboundHandlers, () => {
 });
 
 describe(createSlackInboundHandlers, () => {
+  describe("message edits", () => {
+    const edit = {
+      editedTs: "100.9",
+      message: message({ text: "What was MRR last month?" }),
+      previousText: "What was MRR?",
+    };
+
+    it("drops an edit, even from the sole participant of a subscribed thread", async () => {
+      const ctx = context(true, ["U123"]);
+      const config = configuredChannel();
+      expect(await config.onMessageEdited?.(ctx, edit)).toBeNull();
+      // The same message as a new post would start a turn, so the drop is specific to edits.
+      await expect(
+        config.onMessage?.(ctx, edit.message)
+      ).resolves.toStrictEqual(accepted(userAuth));
+    });
+
+    it("drops an edit to a message that mentions the agent", async () => {
+      const ctx = inboundContext({ mentioned: true, subscribed: true });
+      expect(await configuredChannel().onMessageEdited?.(ctx, edit)).toBeNull();
+      expect(ctx.slack.request).not.toHaveBeenCalled();
+    });
+
+    it("keeps a caller's own edit hook", () => {
+      const onMessageEdited = vi.fn<
+        NonNullable<SlackChannelConfig["onMessageEdited"]>
+      >(() => ({ auth: userAuth }));
+      expect(configuredChannel({ onMessageEdited }).onMessageEdited).toBe(
+        onMessageEdited
+      );
+    });
+  });
+
   it("leaves the message hook absent when automatic replies are disabled", () => {
     const config = configuredChannel({ autoReply: false });
     expect(config.onMessage).toBeUndefined();
@@ -407,6 +443,63 @@ describe(createSlackInboundHandlers, () => {
         );
         expect(ctx.isSubscribed).not.toHaveBeenCalled();
       }
+    );
+  });
+});
+
+describe(slackChannelSettings, () => {
+  it("renders with the caller's renderers first and the shared reply renderer last", () => {
+    vi.stubEnv("SLACK_CONNECTOR", "slack/test");
+    const { renderers } = slackChannelSettings({
+      renderers: [runSqlApprovalCard],
+    });
+    expect(renderers).toStrictEqual([
+      runSqlApprovalCard,
+      { events: replyEvents },
+    ]);
+    expect(slackChannelSettings().renderers).toStrictEqual([
+      { events: replyEvents },
+    ]);
+  });
+
+  it("reads Slack credentials from the Vercel Connect connector in SLACK_CONNECTOR", () => {
+    vi.stubEnv("SLACK_CONNECTOR", "slack/analyst");
+    expect(slackChannelSettings().credentials).toMatchObject({
+      vercelConnect: { connector: "slack/analyst" },
+    });
+  });
+
+  it("requires SLACK_CONNECTOR unless the caller passes credentials", () => {
+    vi.stubEnv("SLACK_CONNECTOR", "");
+    expect(() => slackChannelSettings()).toThrow("SLACK_CONNECTOR");
+    const credentials = { botToken: "xoxb-test", signingSecret: "secret" };
+    expect(slackChannelSettings({ credentials }).credentials).toBe(credentials);
+  });
+
+  it("prefers the caller's credentials over the connector", () => {
+    vi.stubEnv("SLACK_CONNECTOR", "slack/analyst");
+    const credentials = { botToken: "xoxb-test", signingSecret: "secret" };
+    expect(slackChannelSettings({ credentials }).credentials).toBe(credentials);
+  });
+
+  it("loads the thread from its first message and drops edits by default", () => {
+    vi.stubEnv("SLACK_CONNECTOR", "slack/test");
+    const settings = slackChannelSettings();
+    expect(settings.threadContext).toStrictEqual({ since: "thread-root" });
+    expect(settings.onMessageEdited).toBeTypeOf("function");
+    expect(settings.onAppMention).toBeTypeOf("function");
+    expect(settings.onDirectMessage).toBeTypeOf("function");
+    expect(settings.onMessage).toBeTypeOf("function");
+    // Settings only this wrapper understands never reach eve.
+    expect(
+      slackChannelSettings({ autoReply: false, autoReplyChannelIds: ["C1"] })
+    ).not.toHaveProperty("autoReply");
+  });
+
+  it("passes eve's own settings through", () => {
+    vi.stubEnv("SLACK_CONNECTOR", "slack/test");
+    expect(slackChannelSettings({ turnPolicy: "queue" }).turnPolicy).toBe(
+      "queue"
     );
   });
 });

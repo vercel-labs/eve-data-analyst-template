@@ -6,7 +6,8 @@
     "#*": "./agent/*",
     "#evals/*": "./evals/*",
     "#lib/*": "./agent/lib/*.ts",
-    "#scripts/*": "./scripts/*.ts"
+    "#scripts/*": "./scripts/*.ts",
+    "#tests/*": "./tests/*.ts"
   },
   "scripts": {
     "build": "eve build",
@@ -27,14 +28,16 @@
     "knip": "knip"
   },
   "dependencies": {
-    "@vercel/connect": "2.2.0",
-    "ai": "^7.0.128",
-    "eve": "^0.75.0",
-    "just-bash": "3.1.0",
+    "@vercel/connect": "2.9.3",
+    "ai": "^7.0.172",
+    "eve": "^1.0.0",
+    "just-bash": "3.6.0",
     "pg": "^8.23.1",
     "zod": "4.5.4"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.16",
+    "@electric-sql/pglite-socket": "0.2.19",
     "@types/node": "24.x",
     "@types/pg": "^8.23.1",
     "eslint-plugin-jsdoc": "^65.2.1",

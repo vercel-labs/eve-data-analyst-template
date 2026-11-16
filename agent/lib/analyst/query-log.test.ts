@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { installTestState, testState } from "../testing/state";
-import { queriesForTurn, recordQuery, transferQueries } from "./query-log";
+import { queriesForTurn, recordQuery } from "./query-log";
 
 const query = (sql: string) => ({
   purpose: sql,
@@ -34,15 +34,5 @@ describe(recordQuery, () => {
     expect(queriesForTurn("turn-2").map((entry) => entry.sql)).toStrictEqual([
       "SELECT 2",
     ]);
-  });
-});
-
-describe(transferQueries, () => {
-  it("moves queries to the resuming turn only from the matching turn", () => {
-    recordQuery("turn-1", query("SELECT 1"));
-    transferQueries("other", "turn-2");
-    expect(queriesForTurn("turn-2")).toStrictEqual([]);
-    transferQueries("turn-1", "turn-2");
-    expect(queriesForTurn("turn-2")).toHaveLength(1);
   });
 });

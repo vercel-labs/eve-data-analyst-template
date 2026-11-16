@@ -10,7 +10,11 @@ export default defineConfig({
   ignorePatterns: core.ignorePatterns,
   jsPlugins: jsPlugins.jsPlugins,
   overrides: [
-    { files: ["agent/tools/*.ts"], rules: { "unicorn/filename-case": "off" } },
+    {
+      // eve names tools after their files, in the agent and in the end-to-end fixture that mirrors it.
+      files: ["agent/tools/*.ts", "tests/e2e/app/agent/tools/*.ts"],
+      rules: { "unicorn/filename-case": "off" },
+    },
     // Setup scripts run statements in order inside one transaction or connection.
     { files: ["scripts/**/*.ts"], rules: { "no-await-in-loop": "off" } },
   ],

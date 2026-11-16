@@ -43,7 +43,7 @@ Enter the value when prompted, and choose the Vercel environments that should us
 | `ANALYST_MAX_ROWS` | `500` | Rows the agent reads from each query result, from 10 to 5,000 |
 | `ANALYST_DATABASE_URL` | Unset | Connection string for a read-only user you manage yourself, as described in [Give the agent a read-only connection](#give-the-agent-a-read-only-connection) |
 | `ANALYST_LOGIN_PASSWORD` | Generated | Password for a read-only user created with `pnpm db:setup-sql` |
-| `SLACK_CONNECTOR` | Set by Vercel Connect | Slack connector the agent posts with |
+| `SLACK_CONNECTOR` | Set by the deploy button | Slack connector the agent posts with. For a project created another way, see [Set up an existing project](#set-up-an-existing-project). |
 | `SLACK_AUTO_REPLY_CHANNEL_IDS` | Unset | Slack channels where the agent answers every new post |
 | `SLACK_IDENTITY_EXCLUDED_USER_IDS` | Unset | Slack users to leave out of profile lookups |
 
@@ -204,7 +204,11 @@ Cost estimates depend on your data and hardware, so the default only catches ver
 
 [agent/instructions.md](agent/instructions.md) sets the agent's persona, answer format, chart choices, and writing style.
 
-[agent/agent.ts](agent/agent.ts) sets the model and session limits. The template uses Claude Opus 5.5 with medium reasoning, which writes reliable SQL. Use `reasoning: "high"` for complex analysis such as cohorts and retention, or a faster model for quick lookups. To cap spending per conversation, add `maxTokenCostUsdPerSession` to `limits`. When a conversation reaches a limit, eve asks whether to continue.
+[agent/agent.ts](agent/agent.ts) sets the model. The template uses Claude Fable 5.2 with medium reasoning. Use `reasoning: "high"` for complex analysis such as cohorts and retention, or a faster model for quick lookups.
+
+[agent/lib/session-usage.ts](agent/lib/session-usage.ts) sets how much one conversation can use before eve asks whether to continue. Usage is counted in tokens, the units of text a model reads and writes. One conversation can read 5,000,000 tokens or write 100,000 tokens. Choosing Continue allows the same amount again. To limit spending in US dollars, add a cost check to `exceedsSessionUsage`, such as `(window.costUsd ?? 0) >= 5`. There, `window` holds the usage since the last Continue.
+
+After changing the model or the reasoning level, update the expected values in [tests/behavior/agent.test.ts](tests/behavior/agent.test.ts), so `pnpm validate` passes.
 
 ## Customize what the agent remembers
 
@@ -272,11 +276,13 @@ SLACK_IDENTITY_EXCLUDED_USER_IDS=U0123456789,U0987654321
 
 | Feature | Files to remove or change |
 | --- | --- |
-| Slack | Remove `agent/channels/slack.ts`, `agent/tools/post_slack_chart.ts`, `agent/tools/post_slack_table.ts`, and `agent/hooks/reply-continuation.ts` |
+| Slack | Remove `agent/channels/slack.ts`, `agent/tools/post_slack_chart.ts`, and `agent/tools/post_slack_table.ts` |
 | Channel memory | Remove `agent/memory/channel-preferences.ts` |
 | All memory | Remove `agent/memory/` and the Memory section of `agent/instructions.md` |
 | Demo data | Remove `scripts/seed.ts`, `scripts/seed/generate.ts`, `scripts/seed/schema.ts`, and the `db:seed` script. The evals use `scripts/seed/sql.ts`, so remove `evals/` too, or rewrite the evals for your data. |
-| Sandbox commands | Add `agent/tools/bash.ts` and `agent/tools/write_file.ts`, each exporting `disableTool()` |
+| Sandbox commands | Add `agent/tools/bash.ts`, `agent/tools/write_file.ts`, and `agent/tools/edit_file.ts`, each exporting `disableTool()` |
+
+The tests check these features. After removing one, update the lists of tools and files in [tests/behavior/agent.test.ts](tests/behavior/agent.test.ts) and [tests/e2e/http.test.ts](tests/e2e/http.test.ts). Then delete the feature's tests under `tests/e2e/` and its file under `tests/e2e/app/agent/`, so `pnpm validate` passes.
 
 ## Test and deploy your changes
 
@@ -288,7 +294,7 @@ pnpm exec eve info
 pnpm build
 ```
 
-`pnpm validate` checks formatting, lint rules, and types, runs the unit tests, and looks for unused code. The unit tests cover the safety checks, role resolution, approvals, and the demo data generator, and they run without a database.
+`pnpm validate` checks formatting, lint rules, and types, runs the tests, and looks for unused code. The tests need no database and no model. Compiling the agent downloads the public list of AI Gateway models the first time, and later runs reuse the saved copy. The unit tests cover the safety checks, role resolution, approvals, and the demo data generator. The behavior tests under `tests/behavior/` start Postgres inside the test run, load the demo data, and send real queries through the tools, so they show that a write is refused and that each role reads only its own tables. They also compile the agent and check its model and its exact list of tools. The end-to-end tests under `tests/e2e/` run whole conversations through eve with a scripted model and a stand-in for Slack, so they show that an expensive query waits for approval and that a Slack answer lists its SQL. The type tests under `tests/types/` check the tools' inputs and outputs.
 
 `pnpm eval` asks the agent real questions about the demo data and checks the answers. It covers exploring the schema, using the metric definitions, answering last month's MRR and the top traffic source, declining to change data, and pausing expensive queries for approval. Expected answers come from the current data, so they stay correct as the demo data changes. When `pnpm db:doctor` reports that the demo data is out of date, run `pnpm db:setup` or redeploy to refresh it.
 
@@ -300,7 +306,15 @@ Deploy with `vercel deploy --prod`, which keeps your local `.env.local` file as 
 
 To add the template to a Vercel project you created without the deploy button, connect each service yourself:
 
-1. Connect Slack with `pnpm exec eve add channel/slack --non-interactive` and run the commands it prints. This sets `SLACK_CONNECTOR`.
+1. Link the folder to your project with `vercel link`. Then create a Slack app through Vercel Connect and send its events to the agent. Vercel calls the app a connector.
+
+   ```sh
+   vercel connect create slack --name <name> --triggers --trigger-path /eve/v1/slack
+   vercel connect attach slack/<name> --yes
+   ```
+
+   Replace `<name>` with a name for the app, such as `data-analyst`. The first command opens your browser to install the app in your Slack workspace. The second lets the project request the app's token. Run `vercel connect list` to check that the connector appears, and copy its UID, such as `slack/data-analyst`. Then run `vercel env add SLACK_CONNECTOR` and enter the UID as the value. Use these commands in place of `eve add channel/slack`, which doesn't finish Slack setup for this template.
+
 2. Create a private Blob store for memory and connect it to the project:
 
    ```sh

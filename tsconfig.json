@@ -10,5 +10,10 @@
     "noEmit": true,
     "lib": ["ES2024"]
   },
-  "include": ["agent/**/*.ts", "evals/**/*.ts", "scripts/**/*.ts"]
+  "include": [
+    "agent/**/*.ts",
+    "evals/**/*.ts",
+    "scripts/**/*.ts",
+    "tests/**/*.ts"
+  ]
 }

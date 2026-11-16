@@ -215,8 +215,7 @@ const postSlackChartInputSchema = z.strictObject({
  * Successful delivery ends the turn without calling the model again. When the
  * model's step also calls other tools, the turn continues and successful delivery
  * suppresses duplicate final replies only when the same turn has no failed
- * visualization attempts. Shared receipts retain these outcomes
- * across explicit session-limit continuations. Results contain delivery metadata,
+ * visualization attempts. Results contain delivery metadata,
  * not a copy of the chart data. No sandbox or image generation is involved.
  */
 export default defineTool({

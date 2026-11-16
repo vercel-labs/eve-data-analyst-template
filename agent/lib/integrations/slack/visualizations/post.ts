@@ -76,7 +76,7 @@ export const visualizationOutputSchema = z.object({
  * When the delivered message can't show the SQL, posts it as a separate text
  * message, whose failure doesn't change the outcome. Thrown errors and other
  * rejections are not retried because delivery may be uncertain.
- * Records success/failure for final-reply suppression and session continuation.
+ * Records success/failure for final-reply suppression.
  */
 export const postVisualization = async (
   ctx: SlackSessionContext & { session: { turn: { id: string } } },

@@ -1,14 +1,12 @@
 import type { SlackThread } from "eve/channels/slack";
 import type { SessionAuthContext } from "eve/context";
+import type { TurnOutcome } from "eve/events";
 import { beforeEach, expect, it, vi } from "vitest";
 
 import { recordQuery } from "../../analyst/query-log";
 import { recordThreadRole } from "../../analyst/thread-roles";
-import { sessionContext, slackAuth } from "../../testing/session";
-import {
-  messageCompletedHarness,
-  slackEventContext,
-} from "../../testing/slack";
+import { slackAuth } from "../../testing/session";
+import { contentCompletedHarness, rendererContext } from "../../testing/slack";
 import { testState, installTestState } from "../../testing/state";
 import { replyDelivery, replyEvents, THREAD_ROLE_NOTICE } from "./replies";
 import {
@@ -19,14 +17,14 @@ import {
 beforeEach(() => testState.reset());
 
 it("suppresses duplicate prose after a successful visualization", async () => {
-  const harness = messageCompletedHarness(replyEvents["message.completed"]);
+  const harness = contentCompletedHarness(replyEvents["content.completed"]);
   recordVisualizationDelivery("turn-1", true);
   await harness.complete();
   expect(harness.next).not.toHaveBeenCalled();
 });
 
 it("keeps the normal response after any failed visualization", async () => {
-  const harness = messageCompletedHarness(replyEvents["message.completed"]);
+  const harness = contentCompletedHarness(replyEvents["content.completed"]);
   recordVisualizationDelivery("turn-1", true);
   recordVisualizationDelivery("turn-1", false);
   await harness.complete();
@@ -34,35 +32,10 @@ it("keeps the normal response after any failed visualization", async () => {
 });
 
 it("does not suppress later turns", async () => {
-  const harness = messageCompletedHarness(replyEvents["message.completed"]);
+  const harness = contentCompletedHarness(replyEvents["content.completed"]);
   recordVisualizationDelivery("older-turn", true);
   await harness.complete();
   expect(harness.next).toHaveBeenCalledOnce();
-});
-
-it("defers tool-call narration to eve without touching reply state", async () => {
-  const harness = messageCompletedHarness(replyEvents["message.completed"]);
-  harness.channel.state.pendingToolCallMessage = "Checking the warehouse.";
-  recordVisualizationDelivery("turn-1", true);
-  await harness.complete({ finishReason: "tool-calls" });
-  expect(harness.next).toHaveBeenCalledOnce();
-  expect(harness.channel.state.pendingToolCallMessage).toBe(
-    "Checking the warehouse."
-  );
-  expect(visualizationReceipts.get()).toEqual({
-    failed: false,
-    posted: true,
-    turnId: "turn-1",
-  });
-});
-
-it("clears buffered narration when a final reply is suppressed", async () => {
-  const harness = messageCompletedHarness(replyEvents["message.completed"]);
-  harness.channel.state.pendingToolCallMessage = "Checking the warehouse.";
-  recordVisualizationDelivery("turn-1", true);
-  await harness.complete();
-  expect(harness.next).not.toHaveBeenCalled();
-  expect(harness.channel.state.pendingToolCallMessage).toBeNull();
 });
 
 const query = {
@@ -72,13 +45,40 @@ const query = {
   tables: ["analytics.subscriptions", "analytics.customers"],
 };
 
+it.each([
+  ["narration before tool calls", { phase: "narration" }],
+  ["reasoning", { kind: "reasoning" }],
+  ["structured results", { kind: "result", value: { rows: 1 } }],
+  ["files", { kind: "file" }],
+])("leaves %s to eve without touching reply state", async (_name, data) => {
+  const deliver = vi.spyOn(replyDelivery, "post").mockResolvedValue();
+  const harness = contentCompletedHarness(replyEvents["content.completed"]);
+  recordVisualizationDelivery("turn-1", true);
+  recordQuery("turn-1", query);
+  await harness.complete(data);
+  expect(harness.next).toHaveBeenCalledOnce();
+  expect(deliver).not.toHaveBeenCalled();
+  expect(visualizationReceipts.get()).toEqual({
+    failed: false,
+    posted: true,
+    turnId: "turn-1",
+  });
+});
+
+it("leaves a reply that names no turn to eve", async () => {
+  const harness = contentCompletedHarness(replyEvents["content.completed"]);
+  recordVisualizationDelivery("turn-1", true);
+  await harness.complete({}, null);
+  expect(harness.next).toHaveBeenCalledOnce();
+});
+
 it("posts the reply with a folded SQL section when the turn ran queries", async () => {
   const deliver = vi.spyOn(replyDelivery, "post").mockResolvedValue();
-  const harness = messageCompletedHarness(replyEvents["message.completed"]);
+  const harness = contentCompletedHarness(replyEvents["content.completed"]);
   recordQuery("turn-1", query);
   await harness.complete();
   expect(harness.next).not.toHaveBeenCalled();
-  expect(deliver).toHaveBeenCalledExactlyOnceWith(harness.channel, {
+  expect(deliver).toHaveBeenCalledExactlyOnceWith(harness.ctx.channel, {
     blocks: [
       { text: "Here is the result.", type: "markdown" },
       expect.objectContaining({ default_collapsed: true, type: "container" }),
@@ -90,9 +90,18 @@ it("posts the reply with a folded SQL section when the turn ran queries", async 
   });
 });
 
+it("leaves an empty reply to eve's default", async () => {
+  const deliver = vi.spyOn(replyDelivery, "post").mockResolvedValue();
+  const harness = contentCompletedHarness(replyEvents["content.completed"]);
+  recordQuery("turn-1", query);
+  await harness.complete({ value: "" });
+  expect(harness.next).toHaveBeenCalledOnce();
+  expect(deliver).not.toHaveBeenCalled();
+});
+
 it("leaves replies without queries to eve's default", async () => {
   const deliver = vi.spyOn(replyDelivery, "post").mockResolvedValue();
-  const harness = messageCompletedHarness(replyEvents["message.completed"]);
+  const harness = contentCompletedHarness(replyEvents["content.completed"]);
   recordQuery("older-turn", query);
   await harness.complete();
   expect(harness.next).toHaveBeenCalledOnce();
@@ -101,13 +110,13 @@ it("leaves replies without queries to eve's default", async () => {
 
 it("lets delivery failures reach eve's notice instead of posting twice", async () => {
   vi.spyOn(replyDelivery, "post").mockRejectedValue(new Error("invalid_auth"));
-  const harness = messageCompletedHarness(replyEvents["message.completed"]);
+  const harness = contentCompletedHarness(replyEvents["content.completed"]);
   recordQuery("turn-1", query);
   await expect(harness.complete()).rejects.toThrow("invalid_auth");
   expect(harness.next).not.toHaveBeenCalled();
 });
 
-const turnCancelled = replyEvents["turn.cancelled"];
+const turnSettled = replyEvents["turn.settled"];
 
 const alice = slackAuth({ userId: "U0ALICE" });
 
@@ -121,22 +130,44 @@ const holdFinanceResults = () => {
   recordThreadRole(alice);
 };
 
-/* Runs the cancelled-turn renderer for a turn, observing posts and the rest of the chain. */
+/* Runs the settled-turn renderer for a turn, observing posts and the rest of the chain. */
+const settleTurn = (
+  turnId: string,
+  post?: () => Promise<Awaited<ReturnType<SlackThread["post"]>>>,
+  current: SessionAuthContext = slackAuth(),
+  outcome: TurnOutcome = "cancelled"
+) => {
+  const ctx = rendererContext({ current, ...(post && { thread: { post } }) });
+  const next = vi.fn(() => Promise.resolve());
+  const run = turnSettled(
+    { data: { outcome, turnId }, scope: { turnId }, type: "turn.settled" },
+    ctx,
+    next
+  );
+  return { channel: ctx.channel, next, run };
+};
+
 const cancelTurn = (
   turnId: string,
   post?: () => Promise<Awaited<ReturnType<SlackThread["post"]>>>,
-  current: SessionAuthContext = slackAuth()
-) => {
-  const channel = slackEventContext(post ? { thread: { post } } : {});
-  const next = vi.fn(() => Promise.resolve());
-  const run = turnCancelled(
-    { sequence: 7, turnId },
-    channel,
-    sessionContext({ current }),
-    next
-  );
-  return { channel, next, run };
-};
+  current?: SessionAuthContext
+) => settleTurn(turnId, post, current);
+
+it.each<TurnOutcome>(["completed", "failed"])(
+  "posts no notice when a conflicting caller's turn %s",
+  async (outcome) => {
+    holdFinanceResults();
+    const { channel, next, run } = settleTurn(
+      "turn-2",
+      undefined,
+      slackAuth(),
+      outcome
+    );
+    await run;
+    expect(channel.thread.post).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledOnce();
+  }
+);
 
 it("posts the start-a-new-thread notice when the caller's role conflicts", async () => {
   holdFinanceResults();

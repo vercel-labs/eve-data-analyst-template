@@ -111,6 +111,6 @@ pnpm build
 | Answer format, persona, and response style | [agent/instructions.md](agent/instructions.md) |
 | Schemas, time zone, roles, and limits | Environment variables listed in [.env.example](.env.example) |
 | What memory saves | `description` in [agent/memory/](agent/memory/) |
-| Model and session limits | [agent/agent.ts](agent/agent.ts) |
+| Model and session limits | [agent/agent.ts](agent/agent.ts) and [agent/lib/session-usage.ts](agent/lib/session-usage.ts) |
 
 For more, including team roles, approval thresholds, and connecting Stripe or PostHog, see [CUSTOMIZATION.md](CUSTOMIZATION.md).
