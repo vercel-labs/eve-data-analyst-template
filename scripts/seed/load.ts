@@ -34,6 +34,11 @@ export interface SeedClient {
 /** Overrides for {@link loadDemoData}. */
 export interface LoadOptions {
   /**
+   * Latest instant to generate data for.
+   * @remarks Defaults to the start of the current hour. Tests pass a fixed instant, so every run loads identical rows.
+   */
+  readonly anchor?: Date;
+  /**
    * Replace the schema even when other objects were added to it or depend on it, dropping them with `CASCADE`.
    * @remarks Defaults to false. `db:seed --force` sets it; the deploy step never does.
    */
@@ -550,7 +555,7 @@ const swapIntoPlace = async (
  * @param client - Owner connection.
  * @param schema - Validated schema name; callers check {@link replacementBlocker} first.
  * @param grantees - Roles that read the old schema, given the same read access to the new one.
- * @param options - Whether to force the replacement, and the pause between swap attempts.
+ * @param options - The instant the data runs through, whether to force the replacement, and the pause between swap attempts.
  * @returns The anchor time and generated rows.
  * @throws {@link Error} When `schema` is the staging schema, when a schema with the staging name already exists, when the swap still can't get its locks after the last attempt, or, without `force`, when the live schema holds objects the seed didn't create or other objects depend on it. The transaction rolls back, so the old data stays in place.
  * @remarks The data loads into {@link DEMO_STAGING_SCHEMA}, gets its grants and planner statistics there, and only then replaces the live schema with the statements from {@link dropDemoSchemaStatements} and `ALTER SCHEMA ... RENAME`. Without `force`, that drop refuses anything the seed didn't create, including objects added while the data loaded. The old tables stay readable during the load, and the swap holds their locks for milliseconds. The swap waits at most `lock_timeout` for each lock, and is retried from a savepoint a few times. An advisory lock serializes concurrent loads, such as two deploys at once.
@@ -559,14 +564,17 @@ export const loadDemoData = async (
   client: SeedClient,
   schema: string,
   grantees: readonly string[],
-  { force = false, pause = delay }: LoadOptions = {}
+  {
+    anchor = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000),
+    force = false,
+    pause = delay,
+  }: LoadOptions = {}
 ): Promise<LoadedDemoData> => {
   if (schema === DEMO_STAGING_SCHEMA) {
     throw new Error(
       `"${DEMO_STAGING_SCHEMA}" is reserved for loading demo data. Choose another schema.`
     );
   }
-  const anchor = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000);
   console.log(`Generating demo data through ${anchor.toISOString()}…`);
   const data = generateDemoData({ anchor });
   console.log(

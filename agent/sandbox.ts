@@ -19,7 +19,7 @@ export const environment = deployed
  * Opens the session sandbox, denying all outbound network access when deployed.
  *
  * @returns The opened sandbox for the configured environment.
- * @remarks bash and write_file stay enabled for scratch work, so deny-all closes the path of writing query results to a file and sending them out with curl.
+ * @remarks bash, write_file, and edit_file stay enabled for scratch work, so deny-all closes the path of writing query results to a file and sending them out with curl.
  */
 export default defineSandbox(() =>
   deployed

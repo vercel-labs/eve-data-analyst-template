@@ -13,17 +13,12 @@ import {
   createSlackIdentityResolver,
   formatSlackIdentityContext,
 } from "./identity";
-import { createInputRequestEvents } from "./input-requests";
-import type { SlackInputRequestsConfig } from "./input-requests";
 import { replyEvents } from "./replies";
 
 /**
- * Native Slack channel settings with shared identity, approval, and continuation behavior.
+ * Native Slack channel settings with shared identity and reply behavior.
  */
-export type CreateSlackChannelConfig = Omit<
-  SlackChannelConfig,
-  "credentials"
-> & {
+export type CreateSlackChannelConfig = SlackChannelConfig & {
   /**
    * Continue un-mentioned messages in active, single-author threads.
    *
@@ -32,8 +27,6 @@ export type CreateSlackChannelConfig = Omit<
   autoReply?: boolean;
   /** Channels whose new human-authored top-level posts should start an agent reply without a mention. */
   autoReplyChannelIds?: readonly string[];
-  /** Custom input presentations, including the run_sql approval card and delivery receipts. */
-  inputRequests?: SlackInputRequestsConfig;
 };
 
 type InboundHandlers = Pick<
@@ -169,6 +162,16 @@ const routeMessage = async (
   return handler?.(ctx, message) ?? null;
 };
 
+/**
+ * Drops a person's edit to a message the agent already received.
+ *
+ * @returns Null, which tells eve to ignore the edit.
+ * @remarks eve otherwise runs an edit through the mention, DM, and message hooks, and an edit that arrives after the reply starts a new turn. The analyst answers each question once, so edits stay out unless a caller passes its own `onMessageEdited`.
+ */
+const ignoreMessageEdits: NonNullable<
+  SlackChannelConfig["onMessageEdited"]
+> = () => null;
+
 /** Inbound routing settings shared by {@link createSlackChannel} and its tests. */
 export type SlackInboundRoutingConfig = Pick<
   CreateSlackChannelConfig,
@@ -177,14 +180,15 @@ export type SlackInboundRoutingConfig = Pick<
   | "onAppMention"
   | "onDirectMessage"
   | "onMessage"
+  | "onMessageEdited"
   | "threadContext"
 >;
 
 /**
- * Builds the mention, DM, and message hooks registered with eve's Slack channel.
+ * Builds the mention, DM, message, and message-edit hooks registered with eve's Slack channel.
  *
  * @param config - Caller handlers, automatic-reply settings, and the thread history used for profile lookups.
- * @returns Hooks that route each message and append Slack profile context to accepted turns. A hook is undefined when eve should fall back to `onMessage` or ignore the event.
+ * @returns Hooks that route each message and append Slack profile context to accepted turns. A hook is undefined when eve should fall back to `onMessage` or ignore the event. The edit hook drops every edit unless the caller supplies one.
  */
 export const createSlackInboundHandlers = ({
   autoReply = true,
@@ -192,8 +196,10 @@ export const createSlackInboundHandlers = ({
   onAppMention,
   onDirectMessage,
   onMessage,
+  onMessageEdited = ignoreMessageEdits,
   threadContext,
-}: SlackInboundRoutingConfig): InboundHandlers => {
+}: SlackInboundRoutingConfig): InboundHandlers &
+  Pick<SlackChannelConfig, "onMessageEdited"> => {
   const handlers = selectInboundHandlers(
     { onAppMention, onDirectMessage, onMessage },
     autoReply
@@ -224,30 +230,33 @@ export const createSlackInboundHandlers = ({
     onAppMention: createInboundHandler(handlers.onAppMention),
     onDirectMessage: createInboundHandler(handlers.onDirectMessage),
     onMessage: createInboundHandler(handlers.onMessage, autoReplyChannelIds),
+    onMessageEdited,
   };
 };
 
 /**
- * Creates the Slack channel using credentials from the configured Vercel Connect connector.
+ * Builds the settings passed to eve's Slack channel.
  *
- * @param config - Native channel overrides and optional reply or approval presentation settings.
- * @returns A channel definition with authenticated inbound routing and shared event renderers.
- * @throws {@link Error} When SLACK_CONNECTOR is missing.
- * @remarks Export this definition from agent/channels/slack.ts to retain the slack runtime name.
+ * @param config - Native channel overrides, including renderers such as the run_sql approval card.
+ * @returns eve channel settings with authenticated inbound routing, credentials, and the shared reply renderer last.
+ * @throws {@link Error} When SLACK_CONNECTOR is missing and the caller passes no credentials.
+ * @remarks Credentials come from the Vercel Connect connector that SLACK_CONNECTOR names, unless the caller passes its own. Caller renderers come first, so they wrap the shared reply rendering.
  */
-export const createSlackChannel = (config: CreateSlackChannelConfig = {}) => {
+export const slackChannelSettings = (
+  config: CreateSlackChannelConfig = {}
+): SlackChannelConfig => {
   const {
     autoReply,
     autoReplyChannelIds,
-    inputRequests,
     onMessage,
     onAppMention,
     onDirectMessage,
+    onMessageEdited,
     threadContext = { since: "thread-root" },
     ...channelConfig
   } = config;
 
-  return slackChannel({
+  return {
     ...channelConfig,
     ...createSlackInboundHandlers({
       autoReply,
@@ -255,18 +264,27 @@ export const createSlackChannel = (config: CreateSlackChannelConfig = {}) => {
       onAppMention,
       onDirectMessage,
       onMessage,
+      onMessageEdited,
       threadContext,
     }),
-    credentials: connectSlackCredentials(
-      requireEnv("SLACK_CONNECTOR", "slack/your-agent")
-    ),
+    credentials:
+      channelConfig.credentials ??
+      connectSlackCredentials(
+        requireEnv("SLACK_CONNECTOR", "slack/your-agent")
+      ),
     // Caller renderers stay outermost so they can wrap the shared rendering.
-    renderers: [
-      ...(channelConfig.renderers ?? []),
-      {
-        events: { ...replyEvents, ...createInputRequestEvents(inputRequests) },
-      },
-    ],
+    renderers: [...(channelConfig.renderers ?? []), { events: replyEvents }],
     threadContext,
-  });
+  };
 };
+
+/**
+ * Creates the Slack channel using credentials from the configured Vercel Connect connector.
+ *
+ * @param config - Native channel overrides, including renderers such as the run_sql approval card.
+ * @returns A channel definition with authenticated inbound routing and shared event renderers.
+ * @throws {@link Error} When SLACK_CONNECTOR is missing and the caller passes no credentials.
+ * @remarks Export this definition from agent/channels/slack.ts to retain the slack runtime name. Pass `credentials` only to run the channel without Vercel Connect, as the end-to-end tests do with a signing secret.
+ */
+export const createSlackChannel = (config: CreateSlackChannelConfig = {}) =>
+  slackChannel(slackChannelSettings(config));

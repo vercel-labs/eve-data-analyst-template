@@ -1,0 +1,8 @@
+{
+  "name": "eve-data-analyst-e2e",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "eve": "*"
+  }
+}

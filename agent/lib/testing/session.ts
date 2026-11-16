@@ -134,7 +134,7 @@ export const sessionContext = ({
  * Builds a complete public tool context for invoking a tool executor directly.
  *
  * @param options - Authentication overrides and the optional model-facing tool name.
- * @returns A context with fixed call identity, cancellation signal, and explicit unsupported connection access.
+ * @returns A context with fixed call identity, a Slack channel kind, cancellation signal, and explicit unsupported connection access and cross-channel sends.
  */
 export const toolContext = (
   options: SessionOptions & { toolName?: string } = {}
@@ -142,12 +142,16 @@ export const toolContext = (
   ...sessionContext(options),
   abortSignal: new AbortController().signal,
   callId: "call-1",
+  channel: { kind: "channel:slack", metadata: {} },
   getToken: () => {
     throw new Error("This test does not provide connection tokens.");
   },
   messages: [],
   requireAuth: () => {
     throw new Error("This test does not provide connection auth.");
+  },
+  to: () => {
+    throw new Error("This test does not provide cross-channel sends.");
   },
   toolName: options.toolName ?? "tool",
 });
@@ -166,7 +170,6 @@ export const approvalContext = <TInput extends JsonObject>(
 ): ApprovalContext<TInput> => ({
   ...sessionContext(options),
   abortSignal: new AbortController().signal,
-  approvedTools: new Set(),
   callId: "call-1",
   // eve's conditional `ApprovalToolInput` does not resolve for a generic input.
   // SAFETY: TInput is constrained to JSON objects, which are the accepted tool-input branch of eve’s conditional approval type.
@@ -175,7 +178,7 @@ export const approvalContext = <TInput extends JsonObject>(
 });
 
 interface ApprovalResponseOptions<TInput> {
-  decision?: "approve" | "cancel";
+  decision?: "approve" | "deny";
   requester?: SessionAuthContext | null;
   responder?: SessionAuthContext;
   toolInput?: TInput;
@@ -206,8 +209,8 @@ export const approvalResponseContext = <TInput extends JsonObject>({
   },
   request: {
     callId: "call-1",
+    interactionId: "interaction-1",
     principal: requester,
-    requestId: "request-1",
     // SAFETY: TInput is constrained to JSON objects, which are the accepted tool-input branch of eve's conditional approval type.
     toolInput:
       toolInput as ApprovalResponseContext<TInput>["request"]["toolInput"],

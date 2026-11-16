@@ -6,7 +6,7 @@ import { slackApi } from "../integrations/slack/api";
 import { replyEvents } from "../integrations/slack/replies";
 import { visualizationReceipts } from "../integrations/slack/visualizations/receipts";
 import { isCallable, slackAuth, toolContext } from "../testing/session";
-import { messageCompletedHarness } from "../testing/slack";
+import { contentCompletedHarness } from "../testing/slack";
 import { testState, installTestState } from "../testing/state";
 import tool from "./post-slack-table";
 
@@ -215,7 +215,10 @@ beforeEach(installTestState);
 
 beforeEach(() => {
   vi.spyOn(slackApi, "request").mockImplementation(postMock);
-  vi.spyOn(slackApi, "credentials").mockReturnValue({ botToken: "test-token" });
+  vi.spyOn(slackApi, "credentials").mockReturnValue({
+    botToken: "test-token",
+    vercelConnect: { connector: "slack/test" },
+  });
 });
 
 describe("bounded table fallback", () => {
@@ -274,7 +277,7 @@ describe("bounded table fallback", () => {
       failed: false,
       posted: true,
     });
-    const harness = messageCompletedHarness(replyEvents["message.completed"]);
+    const harness = contentCompletedHarness(replyEvents["content.completed"]);
     await harness.complete();
     expect(harness.next).not.toHaveBeenCalled();
   });

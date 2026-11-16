@@ -367,7 +367,7 @@ const main = async () => {
   if (!connector || connector === "slack/placeholder") {
     report(
       "warn",
-      "SLACK_CONNECTOR isn't set to a real connector, so the agent only works through the HTTP API and `eve dev`. Run `pnpm exec eve add channel/slack`."
+      'SLACK_CONNECTOR isn\'t set to a real connector, so the agent only works through the HTTP API and `eve dev`. Create one with `vercel connect create slack`, as CUSTOMIZATION.md describes under "Set up an existing project".'
     );
   }
 };
