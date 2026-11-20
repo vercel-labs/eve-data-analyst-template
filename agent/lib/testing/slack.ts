@@ -189,6 +189,9 @@ export const rendererContext = ({
   SessionOptions & { view?: SessionView } = {}): RendererContext => ({
   ...sessionContext(options),
   channel: slackEventContext(options),
+  waitUntil: (task) => {
+    void task;
+  },
   position: { index: 0, line: 0 },
   view: view ?? emptySessionView(),
 });
